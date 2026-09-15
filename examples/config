@@ -1,0 +1,10 @@
+# Copy to ~/.config/kp/config, or let `kp init /path/to/vault.kdbx` create it.
+# Literal key=value format: no surrounding quotes, no spaces around =.
+# Spaces and = inside values are preserved. No $HOME or ~ expansion.
+database=/Users/you/Library/Mobile Documents/com~apple~CloudDocs/Passwords/vault.kdbx
+keychain_service=KeePassVault
+# Optional. Set this to disambiguate multiple items with the same service.
+keychain_account=
+# Optional additional database key file. Use an absolute path.
+key_file=
+clipboard_timeout=15

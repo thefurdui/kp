@@ -1,0 +1,28 @@
+#!/bin/bash
+# Disable inherited tracing before handling credentials.
+set +x
+set +v
+set -o pipefail
+
+invoked_as=${0##*/}
+source_path=${BASH_SOURCE[0]}
+links=0
+while [[ -L "$source_path" ]]; do
+    ((links += 1))
+    if ((links > 40)); then
+        printf 'kp: too many symbolic links\n' >&2
+        exit 1
+    fi
+    source_dir=$(cd -P -- "$(dirname -- "$source_path")" && pwd) || exit 1
+    source_path=$(readlink -- "$source_path") || exit 1
+    [[ "$source_path" = /* ]] || source_path=$source_dir/$source_path
+done
+KP_ROOT=$(cd -P -- "$(dirname -- "$source_path")/.." && pwd) || exit 1
+# shellcheck source=lib/kp.sh
+source "$KP_ROOT/lib/kp.sh"
+
+if [[ "$invoked_as" = kpc ]]; then
+    kp_main copy "$@"
+else
+    kp_main "$@"
+fi

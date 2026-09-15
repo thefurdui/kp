@@ -1,0 +1,11 @@
+.DS_Store
+.serena/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.kdbx
+*.kdbx.*
+*.key
+*.keyx
+config.local
