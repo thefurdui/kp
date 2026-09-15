@@ -122,6 +122,39 @@ class KeePassXCTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, password + "\n")
 
+    def test_real_batch_move_preserves_credentials_and_accepts_trailing_slash(self):
+        self.assertEqual(self.s.run("mkdir", "work").returncode, 0)
+        self.assertEqual(self.s.run("mkdir", "archive").returncode, 0)
+        entries = ["First app", "Second app", "päss app"]
+        originals = {}
+        for title in entries:
+            result = self.s.run("add", "work/" + title, "-u", "user@example.com", "-g", "-L", "32")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            originals[title] = self.s.run("show", "work/" + title, "-a", "Password").stdout
+        result = self.s.run("mv", *("work/" + title for title in entries), "archive/")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for title in entries:
+            self.assertNotEqual(self.s.run("show", "work/" + title).returncode, 0)
+            result = self.s.run("show", "archive/" + title, "-a", "Password")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, originals[title])
+            self.assertEqual(self.s.run("show", "archive/" + title, "-a", "UserName").stdout, "user@example.com\n")
+        # The original single-entry syntax still works, including root as target.
+        self.assertEqual(self.s.run("mv", "archive/First app", "/").returncode, 0)
+        self.assertEqual(self.s.run("show", "First app", "-a", "Password").stdout, originals["First app"])
+
+    def test_real_move_preflight_leaves_database_unchanged(self):
+        self.assertEqual(self.s.run("mkdir", "archive").returncode, 0)
+        self.assertEqual(self.s.run("add", "First app", "-g").returncode, 0)
+        original = self.s.database.read_bytes()
+        for args in [("First app", "Missing", "archive"), ("First app", "Missing group"),
+                     ("First app", "/First app", "archive"), ("archive", "/")]:
+            with self.subTest(args=args):
+                result = self.s.run("mv", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("no entries moved", result.stderr)
+                self.assertEqual(self.s.database.read_bytes(), original)
+
     def test_real_multiline_copy(self):
         # Use a synthetic XML export/import to create a password that cannot be
         # entered through KeePassXC's line-oriented interactive prompt.

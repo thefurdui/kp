@@ -43,7 +43,18 @@ elif name == "keepassxc-cli":
         print("partial output")
         print("fake backend failure", file=sys.stderr)
         sys.exit(7)
-    if args[0] == "show":
+    if mode == "move-bad-destination" and args[0] == "ls":
+        print("fake missing group", file=sys.stderr)
+        sys.exit(8)
+    if mode == "move-missing-source" and args[0] == "show" and args[-1] == "Missing":
+        print("fake missing entry", file=sys.stderr)
+        sys.exit(6)
+    if mode == "move-write-fail" and args[0] == "mv" and args[-2] == "Failing":
+        print("fake save failure", file=sys.stderr)
+        sys.exit(7)
+    if args[0] == "show" and "Uuid" in args:
+        print("uuid:" + args[-1].lstrip("/"))
+    elif args[0] == "show":
         sys.stdout.buffer.write((root / "entry").read_bytes() + b"\n")
     else:
         print("fake " + args[0])
@@ -153,6 +164,7 @@ class CliTests(unittest.TestCase):
         for args in [(), ("--help",), ("--version",), ("help", "show"),
                      ("help", "copy"), ("help", "init"), ("init", "--help"),
                      ("doctor", "--help"), ("add", "--help"), ("show", "--help"),
+                     ("help", "mv"), ("mv", "--help"),
                      ("generate", "-L", "16")]:
             with self.subTest(args=args):
                 result = self.s.run(*args)
@@ -185,6 +197,73 @@ class CliTests(unittest.TestCase):
     def test_backend_exit_code_is_preserved(self):
         self.s.env["FAKE_MODE"] = "backend-fail"
         self.assertEqual(self.s.run("ls").returncode, 7)
+
+    def test_move_batch_preserves_arguments_and_authenticates_once(self):
+        entries = ["work/First entry", "work/A & B", "work/päss"]
+        result = self.s.run("mv", *entries, "archive/")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.s.log("security")), 1)
+        calls = self.s.log("keepassxc-cli")
+        self.assertEqual([call["args"][0] for call in calls], ["ls", "show", "show", "show", "mv", "mv", "mv"])
+        self.assertEqual([call["args"][-2:] for call in calls[-3:]], [[entry, "archive/"] for entry in entries])
+        for call in calls:
+            self.assertEqual(call["stdin"], self.s.master + "\n")
+            self.assertNotIn(self.s.master, json.dumps(call["args"]))
+            self.assertNotIn(self.s.master, call["environment"].values())
+        for call in calls[1:4]:
+            self.assertEqual(call["args"][-4:-1], ["-a", "Uuid", "--"])
+        self.assertNotIn(self.s.entry, result.stdout + result.stderr)
+
+    def test_move_single_entry_and_authentication_options(self):
+        result = self.s.run("mv", "-q", "--key-file", "key with spaces", "One", "--yubikey=1", "archive")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for call in self.s.log("keepassxc-cli"):
+            self.assertEqual(call["args"][3:7], ["-q", "--key-file", "key with spaces", "--yubikey=1"])
+        self.assertEqual(self.s.log("keepassxc-cli")[-1]["args"][-2:], ["One", "archive"])
+
+    def test_move_end_of_options_supports_paths_starting_with_dash(self):
+        result = self.s.run("mv", "--", "-h", "--help", "-archive/")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [call for call in self.s.log("keepassxc-cli") if call["args"][0] == "mv"]
+        self.assertEqual([call["args"][-3:] for call in calls], [["--", "-h", "-archive/"], ["--", "--help", "-archive/"]])
+
+    def test_move_usage_errors_never_authenticate(self):
+        for args in [(), ("One",), ("", "archive"), ("One", ""), ("--key-file",), ("--yubikey", ""),
+                     ("--no-password", "One", "archive"), ("-f", "One", "archive")]:
+            with self.subTest(args=args):
+                result = self.s.run("mv", *args)
+                self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.s.log("security"), [])
+
+    def test_move_missing_source_or_destination_prevents_all_writes(self):
+        for mode, expected_status in [("move-bad-destination", 8), ("move-missing-source", 6)]:
+            with self.subTest(mode=mode):
+                self.s.env["FAKE_MODE"] = mode
+                result = self.s.run("mv", "One", "Missing", "archive")
+                self.assertEqual(result.returncode, expected_status)
+                self.assertIn("no entries moved", result.stderr)
+        self.assertFalse(any(call["args"][0] == "mv" for call in self.s.log("keepassxc-cli")))
+
+    def test_move_duplicate_entry_is_rejected_before_writes(self):
+        result = self.s.run("mv", "One", "/One", "archive")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("specified more than once", result.stderr)
+        self.assertFalse(any(call["args"][0] == "mv" for call in self.s.log("keepassxc-cli")))
+
+    def test_move_write_failure_stops_with_completed_count(self):
+        self.s.env["FAKE_MODE"] = "move-write-fail"
+        result = self.s.run("mv", "First", "Failing", "Last", "archive")
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("1 of 3 entries moved", result.stderr)
+        self.assertIn("remaining entries were not attempted", result.stderr)
+        calls = [call for call in self.s.log("keepassxc-cli") if call["args"][0] == "mv"]
+        self.assertEqual([call["args"][-2] for call in calls], ["First", "Failing"])
+
+    def test_move_failed_keychain_never_starts_backend(self):
+        self.s.env["FAKE_MODE"] = "keychain-fail"
+        result = self.s.run("mv", "One", "Two", "archive")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.s.log("keepassxc-cli"), [])
 
     def test_secrets_do_not_inherit_exported_variable_attributes(self):
         self.s.env.update(master_password="old master", entry_password="old entry", password="old password")

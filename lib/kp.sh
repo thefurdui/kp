@@ -24,9 +24,10 @@ Everyday use:
   copy ENTRY [SECONDS]      Copy password; clear after 15 seconds by default
   add ENTRY [OPTIONS]       Add entry; -g generates, -p prompts secretly
   edit ENTRY [OPTIONS]      Edit entry; -p prompts secretly
+  mv ENTRY... GROUP         Move one or more entries into an existing group
 
 Also supported:
-  mkdir, mv, rm, rmdir, db-info, export, analyze,
+  mkdir, rm, rmdir, db-info, export, analyze,
   attachment-export, attachment-import, attachment-rm
   generate, diceware, estimate (no database or Keychain needed)
 
@@ -46,6 +47,24 @@ kp_command_help() {
         init) printf 'Usage: kp init DATABASE\nCreate config for an existing database; never overwrite existing config.\n' ;;
         doctor) printf 'Usage: kp doctor\nCheck configuration and dependencies without retrieving credentials.\n' ;;
         copy|clip|kpc) printf 'Usage: kp copy ENTRY [SECONDS]\n       kpc ENTRY [SECONDS]\n' ;;
+        mv) cat <<'EOF'
+Usage: kp mv [OPTIONS] ENTRY... GROUP
+
+Move one or more entries into an existing destination group (the last argument).
+Check the destination and all sources before moving. Stop on the first failure;
+earlier successful moves remain saved. Each entry keeps its title.
+
+Options:
+  -q, --quiet               Pass KeePassXC's quiet option
+  -k, --key-file PATH       Use an additional database key file
+  -y, --yubikey SLOT        Use a YubiKey slot, optionally SLOT:SERIAL
+  -h, --help               Show this help
+  --                       Treat all remaining arguments as paths
+
+Example: kp mv 'work/example-app' 'work/another-app' 'archive/'
+To rename an entry, use kp edit ENTRY -t TITLE.
+EOF
+            ;;
         *) kp_require_backend && keepassxc-cli help "$1" ;;
     esac
 }
@@ -152,7 +171,7 @@ kp_doctor() {
     printf 'Setup checks passed. Credentials and database unlock were not tested.\n'
 }
 
-# Only add/edit need argument inspection: their extra prompt shares stdin with
+# For add/edit, the extra password prompt shares stdin with
 # the database password. Consume option values so a note containing "-p" is data.
 kp_entry_options() {
     entry_prompt=false
@@ -179,14 +198,13 @@ kp_entry_options() {
     fi
 }
 
-kp_run_database() {
-    local command=$1 master_password entry_password result
-    export -n master_password entry_password
-    shift
+kp_with_database_password() {
+    # Keep credentials local to this call. The callback and its helpers can read
+    # this variable through Bash's dynamic scope; it is never passed as an argument.
+    local master_password result
+    export -n master_password
     local security_args=(-s "$keychain_service")
-    local auth_args=(-q)
     [[ -z "$keychain_account" ]] || security_args+=(-a "$keychain_account")
-    [[ -z "$key_file" ]] || auth_args+=(--key-file "$key_file")
 
     # The sentinel preserves trailing line breaks so they can be rejected, not
     # silently removed by command substitution. Neither secret becomes argv.
@@ -201,6 +219,21 @@ kp_run_database() {
     case "$master_password" in
         ''|*$'\n'*|*$'\r'*) kp_error 'database password must be nonempty and single-line'; return 1 ;;
     esac
+
+    "$@"
+    result=$?
+    unset master_password
+    return "$result"
+}
+
+# Called only within kp_with_database_password so the master password is scoped
+# to a single operation, including all checks and writes of a batch move.
+kp_execute_database() {
+    local command=$1 entry_password result
+    export -n entry_password
+    shift
+    local auth_args=(-q)
+    [[ -z "$key_file" ]] || auth_args+=(--key-file "$key_file")
 
     if [[ "${entry_prompt:-false}" = true ]]; then
         # /dev/tty keeps redirected stdin from accidentally becoming a password.
@@ -219,8 +252,77 @@ kp_run_database() {
             keepassxc-cli "$command" "$database" "${auth_args[@]}" "$@"
     fi
     result=$?
-    unset master_password entry_password
+    unset entry_password
     return "$result"
+}
+
+kp_run_database() {
+    kp_with_database_password kp_execute_database "$@"
+}
+
+kp_move() {
+    local move_options=() move_entries=() move_destination
+    while (($#)); do
+        case "$1" in
+            -h|--help) kp_command_help mv; return ;;
+            --) shift; move_entries+=("$@"); break ;;
+            -q|--quiet|--key-file=*|--yubikey=*|-k?*|-y?*) move_options+=("$1") ;;
+            -k|--key-file|-y|--yubikey)
+                [[ $# -ge 2 && -n "$2" ]] || { kp_error "missing value for $1"; return 2; }
+                move_options+=("$1" "$2"); shift ;;
+            -*) kp_error "unsupported mv option: $1 (see kp help mv; use -- before paths starting with -)"; return 2 ;;
+            *) move_entries+=("$1") ;;
+        esac
+        shift
+    done
+    [[ ${#move_entries[@]} -ge 2 ]] || { kp_error 'usage: kp mv [OPTIONS] ENTRY... GROUP'; return 2; }
+    local entry last_index=$((${#move_entries[@]} - 1))
+    move_destination=${move_entries[$last_index]}
+    unset 'move_entries[last_index]'
+    [[ -n "$move_destination" ]] || { kp_error 'destination group must not be empty'; return 2; }
+    for entry in "${move_entries[@]}"; do
+        [[ -n "$entry" ]] || { kp_error 'source entry must not be empty'; return 2; }
+    done
+    kp_load_config || return
+    kp_require_database || return
+    kp_with_database_password kp_move_entries
+}
+
+kp_move_entries() {
+    # move_entries, move_options, and move_destination belong to kp_move.
+    # Preflight uses metadata only and suppresses its output.
+    local entry entry_id seen_id result moved=0
+    local seen_ids=()
+    kp_execute_database ls "${move_options[@]}" -- "$move_destination" >/dev/null
+    result=$?
+    if [[ $result != 0 ]]; then
+        kp_error "cannot access destination group: $move_destination; no entries moved"
+        return "$result"
+    fi
+    for entry in "${move_entries[@]}"; do
+        entry_id=$(kp_execute_database show "${move_options[@]}" -a Uuid -- "$entry")
+        result=$?
+        if [[ $result != 0 ]]; then
+            kp_error "cannot access source entry: $entry; no entries moved"
+            return "$result"
+        fi
+        for seen_id in "${seen_ids[@]}"; do
+            if [[ "$seen_id" = "$entry_id" ]]; then
+                kp_error "source entry specified more than once: $entry; no entries moved"
+                return 2
+            fi
+        done
+        seen_ids+=("$entry_id")
+    done
+    for entry in "${move_entries[@]}"; do
+        kp_execute_database mv "${move_options[@]}" -- "$entry" "$move_destination"
+        result=$?
+        if [[ $result != 0 ]]; then
+            kp_error "move failed for $entry; $moved of ${#move_entries[@]} entries moved to $move_destination; remaining entries were not attempted"
+            return "$result"
+        fi
+        ((moved += 1))
+    done
 }
 
 kp_copy() {
@@ -268,6 +370,7 @@ kp_main() {
             if [[ $# = 1 && ( $1 = --help || $1 = -h ) ]]; then kp_command_help init; else kp_init "$@"; fi
             return ;;
         generate|diceware|estimate) kp_require_backend && keepassxc-cli "$command" "$@"; return ;;
+        mv) kp_move "$@"; return ;;
         copy|clip)
             if [[ ${1:-} = --help || ${1:-} = -h ]]; then
                 kp_command_help copy; return
@@ -278,7 +381,7 @@ kp_main() {
             [[ $# = 0 ]] || { kp_error 'doctor takes no arguments'; return 2; } ;;
         add|edit) kp_entry_options "$@" || return
             if [[ "$entry_help" = true ]]; then kp_require_backend && keepassxc-cli help "$command"; return; fi ;;
-        ls|search|show|mkdir|mv|rm|rmdir|db-info|export|analyze|attachment-export|attachment-import|attachment-rm)
+        ls|search|show|mkdir|rm|rmdir|db-info|export|analyze|attachment-export|attachment-import|attachment-rm)
             if [[ $# = 1 && ( $1 = --help || $1 = -h ) ]]; then
                 kp_require_backend && keepassxc-cli help "$command"; return
             fi ;;

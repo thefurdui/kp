@@ -228,8 +228,34 @@ kp mv 'work/example-app-old' 'archive'
 ```
 
 Create `archive` only if it does not exist. The resulting path is
-`archive/example-app-old`. Renaming uses `edit -t`; `mv` takes an entry path and
-an existing **destination group**, retaining the entry's title.
+`archive/example-app-old`. Renaming uses `edit -t`; `mv` takes one or more entry
+paths followed by an existing **destination group**, retaining each entry's title.
+
+#### Move several entries
+
+Given two existing entries and an `archive` group:
+
+```sh
+kp mv 'work/example-app' 'work/another-app' 'archive/'
+```
+
+As with a Unix move into a directory, the last argument is the destination for all
+preceding sources. A trailing slash is accepted; `/` selects the database root.
+Quote paths containing spaces. Use `--` before paths starting with a dash:
+
+```sh
+kp mv -- '-example-app' 'another-app' 'archive/'
+```
+
+kp checks the destination and every source before writing, rejecting missing paths
+and repeated references to the same entry. It retrieves the Keychain password once
+for the whole batch. Each move is saved separately by KeePassXC: if a move fails,
+kp stops, returns that failure status, and reports how many entries were moved.
+Completed moves remain saved; the batch is not atomic and does not lock out other
+database clients between operations.
+
+This syntax moves entries into groups. Use `edit -t` for renaming entries and the
+GUI for moving groups. See `kp help mv` for the supported options.
 
 #### Generate a password or passphrase without saving an entry
 
@@ -249,7 +275,8 @@ commands. Use separate short options and values (`-q -p`, `-L 32`).
 
 For every upstream flag, run `kp help COMMAND` or `man keepassxc-cli`. Backend help
 shows a required `database` argument; **omit it when calling through kp**. This keeps
-the reference matched to your installed KeePassXC version.
+the reference matched to your installed KeePassXC version. `kp help mv` documents
+kp's additional support for multiple source entries.
 
 #### Setup, help, and clipboard
 
@@ -283,7 +310,7 @@ copy the `.kdbx` file itself.
 | `kp add ENTRY` | Create an entry inside an existing group. `-u` sets its username; `-g` generates a password; `-p` prompts for one. |
 | `kp edit ENTRY` | Change selected fields of an existing entry. `-g` replaces its password, `-p` prompts for one, and `-t TITLE` renames it. |
 | `kp mkdir GROUP` | Create a database group. For a nested path, create its parent groups first. |
-| `kp mv ENTRY GROUP` | Move an entry to an existing destination group. This does not rename the entry or move a group. |
+| `kp mv ENTRY... GROUP` | Move one or more entries to an existing destination group (the last argument). Check paths first; stop on the first failed move. |
 | `kp rm ENTRY` | Remove an entry, using the database's recycle-bin behavior described below. |
 | `kp rmdir GROUP` | Remove a group **and its contents**; the group need not be empty. |
 
@@ -340,8 +367,9 @@ Database commands use KeePassXC's `-q` option to suppress already-answered passw
 prompts and secondary messages. Result data is passed through; copy messages and
 errors go to stderr.
 Exit status is `0` on success, `2` for wrapper usage errors, and nonzero on failure.
-Forwarded commands preserve the backend's exit status; copy reports lookup/helper
-failures as `1`. Wrapper diagnostics use `1` for setup and authentication errors.
+Forwarded commands preserve the backend's exit status; `mv` also preserves the
+status of a failed check or move. Copy reports lookup/helper failures as `1`.
+Wrapper diagnostics use `1` for setup and authentication errors.
 
 ### Configuration reference
 
@@ -384,10 +412,12 @@ kp / kpc ── config ── macOS Keychain
                   delayed conditional cleanup
 ```
 
-Each database operation retrieves the master password anew. A failed Keychain read
-stops before KeePassXC runs. For copy, the complete lookup must succeed before the
-clipboard is touched. Password text is preserved, including embedded and trailing
-newlines; only KeePassXC's final output newline is removed. Empty copies fail.
+Each invocation that accesses the database retrieves the master password anew.
+A batch move reuses it in process memory for its checks and writes, then releases
+the variable when the command ends. A failed Keychain read stops before KeePassXC
+runs. For copy, the complete lookup must succeed before the clipboard is touched.
+Password text is preserved, including embedded and trailing newlines; only
+KeePassXC's final output newline is removed. Empty copies fail.
 
 The helper publishes text together with the
 [`ConcealedType` and `TransientType` markers](https://nspasteboard.org/). A detached
@@ -402,12 +432,13 @@ kp keeps KeePassXC's names and flags for database operations. Familiar commands
 such as `edit -g` remain usable with upstream examples and help, while kp supplies
 the database path, Keychain authentication, and hidden entry-password input.
 The native `copy` workflow adds clipboard markers and conditional expiration;
-`init` and `doctor` handle kp's own configuration.
+`init` and `doctor` handle kp's own configuration. `mv` extends the upstream
+single-entry command with multiple sources, initial validation, and failure reporting.
 
 Group creation is explicit: a typo in an entry path fails instead of creating an
-unintended group. Backend command names and options stay compatible with KeePassXC;
-`kp help COMMAND` and `man keepassxc-cli` provide the full reference for the
-installed version.
+unintended group. The original single-entry `mv ENTRY GROUP` form is preserved.
+`kp help COMMAND` documents wrapper-specific behavior; `man keepassxc-cli` provides
+the backend reference for the installed version.
 
 ### Trust and limits
 

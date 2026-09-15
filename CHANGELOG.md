@@ -5,6 +5,13 @@ User-visible changes are recorded here. Version numbers follow
 
 ## Unreleased
 
+### Added
+
+- `kp mv ENTRY... GROUP` moves multiple entries into an existing group, checks all
+  paths before writing, and reports partial failures. The original single-entry
+  syntax remains supported.
+- A batch move retrieves its Keychain password once for all checks and writes.
+
 ## 0.1.0
 
 Initial release candidate; not yet tagged.
