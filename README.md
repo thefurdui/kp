@@ -1,21 +1,25 @@
 # kp
 
-A small macOS CLI for the KeePass database you use with KeePassium.
+A macOS command-line companion for KeePass databases used with KeePassium.
 
 `kp` supplies your configured database and its password from macOS Keychain to
 `keepassxc-cli`. `kpc` copies an entry's password, marks it as confidential, and
 expires the copy after 15 seconds.
 
 ```sh
-kp search github
-kp show 'Personal/GitHub'
-kpc 'Personal/GitHub'
-kp add 'Work/Example' -u 'me@example.com' -g -L 32
+kp search example-app
+kp show 'work/example-app'
+kpc 'work/example-app'
+kp help edit
 ```
 
 KeePassXC handles the KDBX format and encryption. KeePassium remains your graphical
 client. Both can use the [same compatible database](https://support.keepassium.com/kb/compatible-apps/).
 This is an independent utility, unaffiliated with either project.
+
+[Install](#install) · [Configure](#configure) · [Recipes](#everyday-recipes) ·
+[Commands](#command-reference) · [How it works](#how-it-works) ·
+[Releases](#versioning-and-releases)
 
 ## Requirements
 
@@ -69,16 +73,16 @@ to `PATH`.
 Point `kp` at the existing database:
 
 ```sh
-kp init "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Passwords/vault.kdbx"
+kp init "$HOME/Documents/Passwords/vault.kdbx"
 ```
 
 Use your actual database path. `init` creates `~/.config/kp/config` with mode `600`
 and refuses to overwrite an existing config. It does not create, open, or modify
 the database, and it does not read or change Keychain.
 
-The default Keychain service is `KeePassVault`, matching the original shell
-functions. If you already have that item, keep using it. For a new setup, create
-an item with an interactive, hidden password prompt:
+The default Keychain service name is `KeePassVault`. To create an item containing
+the database's master password, run this command and enter the password at the
+hidden prompt. Skip this step if a matching item already exists:
 
 ```sh
 security add-generic-password -a "$USER" -s 'KeePassVault' -w
@@ -101,42 +105,236 @@ trigger a macOS access prompt.
 
 ## Usage
 
-| Task                                    | Command                                 |
-| --------------------------------------- | --------------------------------------- |
-| List entries or a group                 | `kp ls` / `kp ls 'Work'`                |
-| Find entry paths                        | `kp search github`                      |
-| Show an entry summary                   | `kp show 'Personal/GitHub'`             |
-| Print a specific field                  | `kp show 'Personal/GitHub' -a UserName` |
-| Explicitly print a password             | `kp show 'Personal/GitHub' -a Password` |
-| Copy a password                         | `kpc 'Personal/GitHub'`                 |
-| Copy with a 30-second timeout           | `kp copy 'Personal/GitHub' 30`          |
-| Add with a generated password           | `kp add 'Work/Example' -u me -g -L 32`  |
-| Add with a hidden password prompt       | `kp add 'Work/Example' -u me -p`        |
-| Change a password using a hidden prompt | `kp edit 'Work/Example' -p`             |
-| Create a group                          | `kp mkdir 'Work'`                       |
-| Show backend options                    | `kp help add`                           |
+Start with the [recipes](#everyday-recipes), or jump to the
+[complete command reference](#command-reference). All account names, entry paths,
+and service URLs below are fictional examples. Replace them with values from your
+database.
 
-`kpc ENTRY [SECONDS]` and `kp clip ENTRY [SECONDS]` are aliases for `kp copy`.
-`clip` uses kp's syntax; KeePassXC's additional clipboard options are not forwarded.
-Copy uses an exact entry path; use `search` to find it first. Entry paths containing
-spaces must be quoted. An entry named `-h` or `--help` can be addressed through its
-group path (for example `Personal/--help`).
+`work` is a database group and `work/example-app` is an entry inside it. Quote entry
+names containing spaces and use the spelling shown by `kp ls` or `kp search`.
+After creating the example entry, use the recipes independently; renaming or moving
+it changes the path used by subsequent commands.
 
-The following commands forward their arguments to KeePassXC after inserting the
-configured database: `ls`, `search`, `show`, `add`, `edit`, `mkdir`, `mv`, `rm`,
-`rmdir`, `db-info`, `export`, `analyze`, `attachment-export`, `attachment-import`,
-and `attachment-rm`. See `kp help COMMAND` for the backend syntax, then omit the
-database argument when invoking it through `kp`. Separate short options and their
-values (`-q -p`, `-L 32`). `add` and `edit` recognize both `-p` and
-`--password-prompt`; a blank answer cancels the operation. These prompts require a
-terminal and accept a single line. Generated passwords work in scripts.
+### Everyday recipes
 
-`generate`, `diceware`, and `estimate` run without configuration or Keychain access.
-Database administration (`db-create`, `db-edit`, `merge`, `import`, interactive
-`open`) remains in `keepassxc-cli`: these commands have different database and
-authentication requirements. Do not use `--no-password` through `kp`; it always
-authenticates with Keychain. Hardware-key-only and passwordless databases are
-outside this release's scope.
+#### Create a group and an entry
+
+List the root groups first. Create `work` if it does not exist, then add the entry:
+
+```sh
+kp ls
+kp mkdir 'work'
+kp add 'work/example-app' -u user@example.com -g -L 32
+kpc 'work/example-app'
+```
+
+`-g` generates the password and `-L 32` sets its length. **The parent group must
+already exist.** If `add` reports `Could not create entry with path
+work/example-app.`, check `kp ls` and `kp ls 'work'` first. For nested groups,
+create each parent in order. Use `edit` when you want to change an existing entry.
+
+To supply your own password, use a hidden, single-line prompt instead:
+
+```sh
+kp add 'work/another-app' -u user@example.com -p
+```
+
+Both `add` and `edit` accept `-p` or `--password-prompt`. An empty answer cancels the
+operation. These prompts require a terminal; generated passwords work in scripts.
+
+#### Replace a stored password with a newly generated one
+
+```sh
+kp edit 'work/example-app' -g -L 32
+kpc 'work/example-app'
+```
+
+This generates and saves a new password for the **existing entry**, preserving its
+username and other fields. It updates the database immediately. You must also
+change the password on the actual server or service; kp does not contact it.
+
+If the service requires uppercase, lowercase, digits, and symbols:
+
+```sh
+kp edit 'work/example-app' -g -L 32 -l -U -n -s --every-group
+```
+
+Here `--every-group` requires at least one character from each selected character
+set. To enter a replacement yourself, use `kp edit 'work/example-app' -p`.
+Choose either `-g` or `-p` in a single command.
+
+#### Find entries and read fields
+
+```sh
+kp ls 'work'
+kp ls -R -f
+kp search example-app
+kp show 'work/example-app'
+kp show 'work/example-app' -a UserName -a URL
+```
+
+`ls -R -f` lists entries recursively with flattened paths. A normal `show` masks
+protected fields. Explicitly selecting `-a Password` prints the password in clear
+text; `-s` reveals protected fields in the summary. For an entry with TOTP already
+configured, `kp show 'work/example-app' --totp` prints its current code.
+
+#### Copy a password
+
+```sh
+kpc 'work/example-app'
+kp copy 'work/example-app' 30
+```
+
+The first uses the configured timeout (15 seconds by default); the second uses
+30 seconds. `kpc ENTRY [SECONDS]` and `kp clip ENTRY [SECONDS]` are aliases for
+`kp copy`. They copy the password from an exact entry path; they do not accept
+KeePassXC's additional `clip` options. Use `search` to find the path first. An entry
+named `-h` or `--help` can be addressed through its group path, such as
+`work/--help`.
+
+#### Update account details
+
+```sh
+kp edit 'work/example-app' -u user@example.com \
+  --url 'https://app.example.com' \
+  --notes 'Example application account'
+```
+
+Omitted fields retain their values. Editing account details without `-g` or `-p`
+preserves the stored password.
+
+#### Store and retrieve an attachment
+
+Given an existing local file `./recovery.txt`:
+
+```sh
+kp attachment-import 'work/example-app' 'recovery.txt' './recovery.txt'
+kp show 'work/example-app' --show-attachments
+kp attachment-export 'work/example-app' 'recovery.txt' './recovery-copy.txt'
+kp attachment-rm 'work/example-app' 'recovery.txt'
+```
+
+The attachment name and local filename are separate arguments. Import leaves the
+source file in place; export writes a separate local file; `attachment-rm` removes
+the attachment from the entry. Use `attachment-import -f` to replace an existing
+attachment of the same name.
+
+#### Rename and move an entry
+
+```sh
+kp edit 'work/example-app' -t 'example-app-old'
+kp mkdir 'archive'
+kp mv 'work/example-app-old' 'archive'
+```
+
+Create `archive` only if it does not exist. The resulting path is
+`archive/example-app-old`. Renaming uses `edit -t`; `mv` takes an entry path and
+an existing **destination group**, retaining the entry's title.
+
+#### Generate a password or passphrase without saving an entry
+
+```sh
+kp generate -L 32
+kp diceware -W 6
+```
+
+These print a generated value to stdout without opening or updating the database.
+Use `add -g` or `edit -g` when you want the generated password saved to an entry.
+
+### Command reference
+
+This reference covers every command exposed by kp. Uppercase words are placeholders;
+brackets indicate optional arguments. Append supported KeePassXC options to database
+commands. Use separate short options and values (`-q -p`, `-L 32`).
+
+For every upstream flag, run `kp help COMMAND` or `man keepassxc-cli`. Backend help
+shows a required `database` argument; **omit it when calling through kp**. This keeps
+the reference matched to your installed KeePassXC version.
+
+#### Setup, help, and clipboard
+
+| Command | Purpose |
+| --- | --- |
+| `kp init DATABASE` | Create config pointing at an existing database; refuse to overwrite existing config. |
+| `kp doctor` | Check config, paths, and tools without retrieving credentials or unlocking the database. |
+| `kp help [COMMAND]` | Show kp's overview or help for a command. `kp`, `kp -h`, and `kp --help` also show the overview. |
+| `kp --version` | Print the installed kp version; `kp -v` is an alias. |
+| `kp copy ENTRY [SECONDS]` | Copy the entry password with confidential/transient markers and conditional expiration; aliases: `kp clip` and `kpc`. |
+
+#### Browse and inspect the database
+
+| Command | Purpose |
+| --- | --- |
+| `kp ls [GROUP]` | List the root or a group's contents. `-R` includes descendants; `-f` flattens output. |
+| `kp search QUERY` | Search entries and print matching paths for use with `show`, `copy`, or `edit`. |
+| `kp show ENTRY` | Display an entry. `-a FIELD` selects fields, `--totp` prints a configured TOTP code, and `--show-attachments` lists attachments. |
+| `kp db-info` | Display database metadata, such as its format, encryption settings, and entry/group counts. |
+| `kp analyze -H FILE` | Check entry passwords against a local HIBP password-hash file. In KeePassXC 2.7.12, this file is required; the command does not download it. |
+| `kp export` | Write an **unencrypted** database export to stdout. `-f xml`, `-f csv`, or `-f html` selects the format; XML is the default. |
+
+For example, `kp export -f csv > export.csv` writes a plaintext export containing
+credentials. Keep exports outside the repository. To back up the encrypted database,
+copy the `.kdbx` file itself.
+
+#### Change entries and groups
+
+| Command | Purpose |
+| --- | --- |
+| `kp add ENTRY` | Create an entry inside an existing group. `-u` sets its username; `-g` generates a password; `-p` prompts for one. |
+| `kp edit ENTRY` | Change selected fields of an existing entry. `-g` replaces its password, `-p` prompts for one, and `-t TITLE` renames it. |
+| `kp mkdir GROUP` | Create a database group. For a nested path, create its parent groups first. |
+| `kp mv ENTRY GROUP` | Move an entry to an existing destination group. This does not rename the entry or move a group. |
+| `kp rm ENTRY` | Remove an entry, using the database's recycle-bin behavior described below. |
+| `kp rmdir GROUP` | Remove a group **and its contents**; the group need not be empty. |
+
+Writes take effect immediately. `rm` and `rmdir` do not prompt for confirmation.
+With the recycle bin enabled, they normally move items there; with it disabled,
+or when removing items already in the recycle bin, removal is permanent. This is
+KeePassXC's [entry](https://github.com/keepassxreboot/keepassxc/blob/2.7.12/src/cli/Remove.cpp)
+and [group](https://github.com/keepassxreboot/keepassxc/blob/2.7.12/src/cli/RemoveGroup.cpp)
+removal behavior. Use KeePassium or KeePassXC's GUI to inspect or restore recycled
+items when needed.
+
+#### Attachments
+
+| Command | Purpose |
+| --- | --- |
+| `kp attachment-import ENTRY NAME FILE` | Read a local file into a named entry attachment; `-f` allows replacement. |
+| `kp attachment-export ENTRY NAME FILE` | Write a named attachment to a local file. |
+| `kp attachment-rm ENTRY NAME` | Remove a named attachment from an entry. |
+
+#### Tools that do not open the database
+
+| Command | Purpose |
+| --- | --- |
+| `kp generate` | Print a random password. `-L` sets its length; `-l`, `-U`, `-n`, and `-s` select character sets. |
+| `kp diceware` | Print a random passphrase. `-W` sets the word count; `-w FILE` supplies a custom word list. |
+| `kp estimate [PASSWORD]` | Estimate password entropy. With no password argument, read one line from stdin. |
+
+These commands need no configuration or Keychain access. For an existing single-line
+entry password, use stdin to avoid putting it in command arguments or shell history:
+
+```sh
+kp show 'work/example-app' -a Password | kp estimate
+```
+
+`estimate` reads ordinary stdin, so typing directly into it is not a hidden prompt.
+Its `--advanced` option prints password fragments as part of the analysis. See the
+[upstream implementation](https://github.com/keepassxreboot/keepassxc/blob/2.7.12/src/cli/Estimate.cpp)
+for these input/output details.
+
+#### Database administration
+
+Use `keepassxc-cli` directly for `db-create` (new database), `db-edit` (database
+settings or master credentials), `merge` (combine databases), and `import` (create a
+database from XML). Its interactive `open`/`close` commands are also outside kp's
+scope. These commands need different database arguments, authentication flows, or
+session state. Inspect their usage with `keepassxc-cli help COMMAND`.
+
+Do not use `--no-password` through kp; it always authenticates with Keychain.
+Hardware-key-only and passwordless databases are outside this release's scope.
+
+#### Output and exit status
 
 Database commands use KeePassXC's `-q` option to suppress already-answered password
 prompts and secondary messages. Result data is passed through; copy messages and
@@ -167,7 +365,7 @@ Set `KP_CONFIG_FILE` to use a different config; an explicitly selected missing f
 is an error. A copy's positional timeout overrides the configured timeout.
 
 ```sh
-KP_CLIPBOARD_TIMEOUT=30 kpc 'Personal/GitHub'
+KP_CLIPBOARD_TIMEOUT=30 kpc 'work/example-app'
 KP_CONFIG_FILE="$HOME/.config/kp/work" kp ls
 ```
 
@@ -197,6 +395,19 @@ cleanup process receives only a clipboard generation and random ownership token.
 After the timeout it checks both before clearing, so an older timer normally leaves
 newer clipboard contents alone. The check uses macOS's
 [`changeCount`](https://developer.apple.com/documentation/appkit/nspasteboard/changecount).
+
+### Where the wrapper adds value
+
+kp keeps KeePassXC's names and flags for database operations. Familiar commands
+such as `edit -g` remain usable with upstream examples and help, while kp supplies
+the database path, Keychain authentication, and hidden entry-password input.
+The native `copy` workflow adds clipboard markers and conditional expiration;
+`init` and `doctor` handle kp's own configuration.
+
+Group creation is explicit: a typo in an entry path fails instead of creating an
+unintended group. Backend command names and options stay compatible with KeePassXC;
+`kp help COMMAND` and `man keepassxc-cli` provide the full reference for the
+installed version.
 
 ### Trust and limits
 
@@ -242,8 +453,8 @@ The repository has three runtime responsibilities:
 | `lib/kp.sh`                      | Configuration, CLI dispatch, Keychain and KeePassXC orchestration |
 | `lib/clipboard.applescript`      | Native pasteboard writes and conditional expiration               |
 
-`scripts/install.sh` owns installation; `VERSION` owns the release number. No generic
-plugin system or password-storage layer is needed for this scope.
+`scripts/install.sh` manages installation and removal. `VERSION` supplies the release
+number reported by the installed command.
 
 ```sh
 brew install shellcheck
@@ -265,10 +476,9 @@ unredacted exports.
 
 ## Versioning and releases
 
-Versioning belongs to the project, independently of a package manager.
-[VERSION](VERSION) contains `0.1.0`, which is also printed by `kp --version` and
+[VERSION](VERSION) is the source of the version printed by `kp --version` and is
 included in installations. An annotated Git tag identifies the exact released
-commit. The file keeps version reporting working in downloads without `.git`.
+commit. Version reporting also works in source downloads without `.git`.
 
 Use [Semantic Versioning](https://semver.org/): after `1.0.0`, fixes increment PATCH,
 compatible features increment MINOR, and breaking CLI/config changes increment
@@ -300,4 +510,4 @@ Manual releases are enough at this size.
 
 ## License
 
-[MIT](LICENSE), copyright Andrei Furdui.
+[MIT](LICENSE).
