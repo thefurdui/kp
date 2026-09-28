@@ -43,6 +43,9 @@ elif name == "keepassxc-cli":
         print("partial output")
         print("fake backend failure", file=sys.stderr)
         sys.exit(7)
+    if mode == "lookup-fail" and args[0] == "show":
+        print("fake lookup failure", file=sys.stderr)
+        sys.exit(6)
     if mode == "move-bad-destination" and args[0] == "ls":
         print("fake missing group", file=sys.stderr)
         sys.exit(8)
@@ -103,9 +106,9 @@ class Sandbox:
         path = self.path / (name + ".jsonl")
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
-    def wait_cleanup(self):
+    def wait_cleanup(self, count=1):
         for _ in range(100):
-            if any(call["args"][1] == "clear" for call in self.log("osascript")):
+            if sum(call["args"][1] == "clear" for call in self.log("osascript")) >= count:
                 return
             time.sleep(0.01)
         raise AssertionError("cleanup process did not start")
@@ -184,36 +187,82 @@ class CliTests(unittest.TestCase):
                              ["generate", "-L", length, "-l", "-U", "-n", "-s", "--every-group"])
         self.assertEqual(self.s.log("security"), [])
 
-    def test_renew_preserves_entry_path_and_authenticates_once(self):
-        for entry, args, length in (("Work/A & päss", (), "32"), ("--help", ("16",), "16")):
-            result = self.s.run("renew", "--", entry, *args)
+    def test_password_shortcuts_save_then_copy_and_authenticate_once(self):
+        self.s.env["KP_CLIPBOARD_TIMEOUT"] = "030"
+        key_file = self.s.path / "key file"
+        key_file.touch()
+        self.s.env["KP_KEY_FILE"] = str(key_file)
+        cases = [(("strong", "Work/A & päss"), "add", "Work/A & päss", "32"),
+                 (("strong", "New entry", "24"), "add", "New entry", "24"),
+                 (("strong", "--", "32"), "add", "32", "32"),
+                 (("strong", "--", "--help"), "add", "--help", "32"),
+                 (("renew", "Entry"), "edit", "Entry", "32"),
+                 (("renew", "--", "--help", "16"), "edit", "--help", "16")]
+        for args, command, entry, length in cases:
+            result = self.s.run(*args)
             self.assertEqual(result.returncode, 0, result.stderr)
-            call = self.s.log("keepassxc-cli")[-1]
-            self.assertEqual(call["args"], ["edit", str(self.s.database), "-q", "-g", "-L", length,
+            write, lookup = self.s.log("keepassxc-cli")[-2:]
+            auth = [str(self.s.database), "-q", "--key-file", str(key_file)]
+            self.assertEqual(write["args"], [command, *auth, "-g", "-L", length,
                                             "-l", "-U", "-n", "-s", "--every-group", "--", entry])
-            self.assertEqual(call["stdin"], self.s.master + "\n")
-        self.assertEqual(len(self.s.log("security")), 2)
-        self.assertEqual(len(self.s.log("keepassxc-cli")), 2)
-        self.assertEqual(self.s.log("osascript"), [])
+            self.assertEqual(lookup["args"], ["show", *auth, "-a", "Password", "--", entry])
+            for call in (write, lookup):
+                self.assertEqual(call["stdin"], self.s.master + "\n")
+            self.assertEqual((self.s.path / "clipboard").read_text(), self.s.entry)
+            self.assertIn("expires in 30 seconds", result.stderr)
+            self.assertNotIn(self.s.entry, result.stdout + result.stderr)
+        self.s.wait_cleanup(len(cases))
+        self.assertEqual(len(self.s.log("security")), len(cases))
+        self.assertEqual(len(self.s.log("keepassxc-cli")), 2 * len(cases))
+        for call in self.s.log("osascript"):
+            self.assertNotIn(self.s.entry, json.dumps(call["args"]))
+            if call["args"][1] == "clear":
+                self.assertEqual(call["args"][-1], "30")
 
     def test_password_shortcuts_reject_invalid_input_before_authentication(self):
         for length in ("", "0", "3", "11", "257", "999999999999999999", "-1", "1+4", "abc"):
-            for args in (("strong", length), ("renew", "Entry", length)):
+            for args in (("strong", "Entry", length), ("renew", "Entry", length)):
                 with self.subTest(args=args):
                     self.assertEqual(self.s.run(*args).returncode, 2)
         for args in (("renew",), ("renew", ""), ("renew", "Entry", "32", "extra"),
-                     ("strong", "32", "extra")):
+                     ("strong", "32", "extra"), ("strong", ""), ("strong", "--"),
+                     ("strong", "Entry", "32", "extra"), ("strong", "--typo")):
             self.assertEqual(self.s.run(*args).returncode, 2)
         self.assertEqual(self.s.log("security"), [])
         self.assertEqual(self.s.log("keepassxc-cli"), [])
 
     def test_password_shortcuts_propagate_failures(self):
         self.s.env["FAKE_MODE"] = "keychain-fail"
-        self.assertNotEqual(self.s.run("renew", "Entry").returncode, 0)
+        for command in ("strong", "renew"):
+            self.assertNotEqual(self.s.run(command, "Entry").returncode, 0)
         self.assertEqual(self.s.log("keepassxc-cli"), [])
         self.s.env["FAKE_MODE"] = "backend-fail"
-        for args in (("strong",), ("renew", "Entry")):
+        for args in (("strong",), ("strong", "Entry"), ("renew", "Entry")):
             self.assertEqual(self.s.run(*args).returncode, 7)
+        self.assertEqual(self.s.log("osascript"), [])
+        self.assertFalse(any(call["args"][0] == "show" for call in self.s.log("keepassxc-cli")))
+
+    def test_shortcuts_validate_clipboard_timeout_before_writing(self):
+        self.s.env["KP_CLIPBOARD_TIMEOUT"] = "0"
+        for command in ("strong", "renew"):
+            result = self.s.run(command, "Entry")
+            self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.s.log("security"), [])
+        self.assertEqual(self.s.log("keepassxc-cli"), [])
+
+    def test_shortcuts_report_saved_password_when_copy_fails(self):
+        (self.s.path / "clipboard").write_text("original clipboard")
+        for mode in ("lookup-fail", "clipboard-fail"):
+            self.s.env["FAKE_MODE"] = mode
+            for command in ("strong", "renew"):
+                with self.subTest(mode=mode, command=command):
+                    result = self.s.run(command, "Entry")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("password saved, but copying failed", result.stderr)
+                    self.assertIn("kp copy ENTRY", result.stderr)
+                    self.assertNotIn("Password copied", result.stderr)
+                    self.assertEqual((self.s.path / "clipboard").read_text(), "original clipboard")
+        self.assertFalse(any(call["args"][1] == "clear" for call in self.s.log("osascript")))
 
     def test_arguments_and_master_password_are_preserved(self):
         result = self.s.run("show", "Work/A & B", "-a", "UserName")
@@ -340,7 +389,7 @@ class CliTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result = self.s.run("copy", "Missing")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("clipboard left unchanged", result.stderr)
+                self.assertIn("Keychain" if mode == "keychain-fail" else "clipboard left unchanged", result.stderr)
         self.assertEqual(self.s.log("osascript"), [])
 
     def test_helper_failure_does_not_report_success(self):

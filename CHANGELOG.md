@@ -8,8 +8,11 @@ User-visible changes are recorded here. Version numbers follow
 ### Added
 
 - `kp strong [LENGTH]` prints a password with lowercase, uppercase, digits, and
-  symbols; `kp renew ENTRY [LENGTH]` saves one to an existing entry. Both default
-  to 32 characters and accept lengths from 12 to 256.
+  symbols. `kp strong ENTRY [LENGTH]` creates an entry and copies its password;
+  `kp renew ENTRY [LENGTH]` replaces an existing entry's password and copies it.
+  All forms default to 32 characters and accept lengths from 12 to 256.
+- Entry password shortcuts retrieve the Keychain password once, use the configured
+  clipboard expiration, and report when a password was saved but copying failed.
 - `kp mv ENTRY... GROUP` moves multiple entries into an existing group, checks all
   paths before writing, and reports partial failures. The original single-entry
   syntax remains supported.

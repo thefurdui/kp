@@ -133,6 +133,20 @@ already exist.** If `add` reports `Could not create entry with path
 work/example-app.`, check `kp ls` and `kp ls 'work'` first. For nested groups,
 create each parent in order. Use `edit` when you want to change an existing entry.
 
+To create an entry with the strong password policy and copy it in one command:
+
+```sh
+kp strong 'work/new-app'
+kp strong 'work/another-new-app' 24
+```
+
+This saves a new password with lowercase, uppercase, digits, and symbols, then
+copies it with the configured expiration (15 seconds by default). The default
+length is 32; an optional length accepts 12–256 characters. The parent group must
+already exist. An existing entry is rejected; use `renew` to replace its password.
+For a numeric entry name or a path starting with a dash, use `--`, for example
+`kp strong -- '1234'`. Without `--`, `kp strong 24` prints a 24-character password.
+
 To supply your own password, use a hidden, single-line prompt instead:
 
 ```sh
@@ -148,15 +162,20 @@ For the everyday shortcut, use:
 
 ```sh
 kp renew 'work/example-app'
-kpc 'work/example-app'
 ```
 
 `renew` immediately replaces the existing entry's password with a 32-character
 password containing at least one lowercase letter, uppercase letter, digit, and
-symbol. It preserves the other fields. Pass a length to customize it:
+symbol, then copies it with the configured expiration. It preserves the other
+fields. Pass a length to customize it:
 `kp renew 'work/example-app' 24` (12–256 characters). Change the password on the
 actual service separately. Use `kp renew -- '-entry-name'` for a path starting
 with a dash.
+
+Both entry shortcuts save before copying and retrieve the Keychain password once
+for the write and lookup. If copying fails after a successful save, the command
+returns an error explaining that the password is already saved. Retry with
+`kp copy 'work/example-app'` to copy that password without generating another one.
 
 The standard KeePassXC commands remain available for custom policies:
 
@@ -330,7 +349,8 @@ copy the `.kdbx` file itself.
 | --- | --- |
 | `kp add ENTRY` | Create an entry inside an existing group. `-u` sets its username; `-g` generates a password; `-p` prompts for one. |
 | `kp edit ENTRY` | Change selected fields of an existing entry. `-g` replaces its password, `-p` prompts for one, and `-t TITLE` renames it. |
-| `kp renew ENTRY [LENGTH]` | Replace an existing entry's password with the `strong` policy; defaults to 32 characters, accepts 12–256. |
+| `kp strong ENTRY [LENGTH]` | Create an entry with a strong password and copy it; defaults to 32 characters, accepts 12–256. |
+| `kp renew ENTRY [LENGTH]` | Replace an existing entry's password with the `strong` policy and copy it; same length rules. |
 | `kp mkdir GROUP` | Create a database group. For a nested path, create its parent groups first. |
 | `kp mv ENTRY... GROUP` | Move one or more entries to an existing destination group (the last argument). Check paths first; stop on the first failed move. |
 | `kp rm ENTRY` | Remove an entry, using the database's recycle-bin behavior described below. |
@@ -436,8 +456,9 @@ kp / kpc ── config ── macOS Keychain
 ```
 
 Each invocation that accesses the database retrieves the master password anew.
-A batch move reuses it in process memory for its checks and writes, then releases
-the variable when the command ends. A failed Keychain read stops before KeePassXC
+A batch move or an entry password shortcut reuses it in process memory for its
+database operations, then releases the variable when the command ends.
+A failed Keychain read stops before KeePassXC
 runs. For copy, the complete lookup must succeed before the clipboard is touched.
 Password text is preserved, including embedded and trailing newlines; only
 KeePassXC's final output newline is removed. Empty copies fail.
@@ -455,6 +476,7 @@ kp keeps KeePassXC's names and flags for database operations. Familiar commands
 such as `edit -g` remain usable with upstream examples and help, while kp supplies
 the database path, Keychain authentication, and hidden entry-password input.
 The native `copy` workflow adds clipboard markers and conditional expiration;
+`strong ENTRY` and `renew ENTRY` reuse it after saving the generated password.
 `init` and `doctor` handle kp's own configuration. `mv` extends the upstream
 single-entry command with multiple sources, initial validation, and failure reporting.
 

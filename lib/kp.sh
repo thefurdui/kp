@@ -18,8 +18,9 @@ Setup:
   --version                 Print the kp version
 
 Everyday use:
-  strong [LENGTH]           Print a password with all four character types (32)
-  renew ENTRY [LENGTH]      Replace a stored password with the same policy
+  strong ENTRY [LENGTH]     Create an entry with a generated password and copy it
+  strong [LENGTH]           Print a password without saving (32 characters)
+  renew ENTRY [LENGTH]      Replace a stored password and copy it
   ls [GROUP]                List entries
   search QUERY              Find entry paths
   show ENTRY [OPTIONS]      Show an entry (password hidden by default)
@@ -51,16 +52,19 @@ kp_command_help() {
         copy|clip|kpc) printf 'Usage: kp copy ENTRY [SECONDS]\n       kpc ENTRY [SECONDS]\n' ;;
         strong|renew) cat <<'EOF'
 Usage: kp strong [LENGTH]
+       kp strong ENTRY [LENGTH]
        kp renew ENTRY [LENGTH]
 
 Generate a password containing lowercase, uppercase, digits, and symbols.
 Length defaults to 32; accepted range is 12–256 characters.
-strong prints the password without opening the database.
-renew saves a new password to an existing entry, preserving other fields.
-It updates the vault immediately; change the password on the service separately.
-Use kp copy ENTRY to copy the saved password.
+strong without an entry prints the password without opening the database.
+strong ENTRY creates a new entry; its parent group must already exist.
+renew replaces an existing entry's password, preserving other fields.
+Both entry commands save immediately, then copy with the configured expiration
+(15 seconds by default). Change the password on the service separately.
+If copying fails after saving, retry with kp copy ENTRY; the password stays saved.
 Use generate or edit -g for custom KeePassXC generation options.
-Use -- before an entry path starting with a dash.
+Use -- before a numeric entry name or a path starting with a dash.
 EOF
             ;;
         mv) cat <<'EOF'
@@ -341,16 +345,26 @@ kp_move_entries() {
     done
 }
 
-kp_copy() {
-    [[ $# -ge 1 && $# -le 2 && -n "$1" ]] || { kp_error 'usage: kp copy ENTRY [SECONDS] (or kpc ENTRY [SECONDS])'; return 2; }
-    local timeout=${2-$clipboard_timeout} password receipt result
-    export -n password
-    kp_validate_timeout "$timeout" || return 2
+kp_require_clipboard() {
+    kp_validate_timeout "$1" || return 2
     command -v osascript >/dev/null 2>&1 || { kp_error 'macOS osascript command is missing'; return 1; }
     command -v nohup >/dev/null 2>&1 || { kp_error 'nohup command is missing'; return 1; }
+}
+
+kp_copy() {
+    [[ $# -ge 1 && $# -le 2 && -n "$1" ]] || { kp_error 'usage: kp copy ENTRY [SECONDS] (or kpc ENTRY [SECONDS])'; return 2; }
+    local timeout=${2-$clipboard_timeout}
+    kp_require_clipboard "$timeout" || return
+    kp_with_database_password kp_copy_entry "$1" "$timeout"
+}
+
+# Called with the master password already scoped by kp_with_database_password.
+kp_copy_entry() {
+    local timeout=$2 password receipt result
+    export -n password
     # Preserve embedded/trailing newlines. Strip only KeePassXC's output newline.
     password=$(
-        kp_run_database show -a Password -- "$1"
+        kp_execute_database show -a Password -- "$1"
         result=$?
         printf '\001'
         exit "$result"
@@ -370,22 +384,41 @@ kp_copy() {
     printf 'Password copied; expires in %s seconds.\n' "$((10#$timeout))" >&2
 }
 
+kp_save_and_copy() {
+    local command=$1 entry=$2
+    shift 2
+    kp_execute_database "$command" -g "$@" -- "$entry" || return
+    kp_copy_entry "$entry" "$clipboard_timeout" || {
+        kp_error 'password saved, but copying failed; use kp copy ENTRY to retry without generating another password'
+        return 1
+    }
+}
+
 kp_password_shortcut() {
-    local shortcut=$1 entry='' length
+    local shortcut=$1 entry='' length entry_mode=false explicit_entry=false command=add
     shift
     if [[ $# = 1 && ( $1 = -h || $1 = --help ) ]]; then
         kp_command_help "$shortcut"
         return
     fi
-    if [[ ${1:-} = -- ]]; then shift; fi
+    if [[ ${1:-} = -- ]]; then explicit_entry=true; shift; fi
     if [[ "$shortcut" = renew ]]; then
+        command=edit
+        entry_mode=true
+    elif [[ "$explicit_entry" = true || $# -gt 1 ]]; then
+        entry_mode=true
+    else
+        case "${1-32}" in ''|*[!0-9]*) entry_mode=true ;; esac
+    fi
+    if [[ "$entry_mode" = true ]]; then
         [[ $# -ge 1 && $# -le 2 && -n "$1" ]] || {
-            kp_error 'usage: kp renew ENTRY [LENGTH]'; return 2;
+            kp_error "usage: kp $shortcut ENTRY [LENGTH]"; return 2;
         }
+        if [[ "$explicit_entry" = false && "$1" = -* ]]; then
+            kp_error 'use -- before an entry path starting with a dash'; return 2
+        fi
         entry=$1
         shift
-    else
-        [[ $# -le 1 ]] || { kp_error 'usage: kp strong [LENGTH]'; return 2; }
     fi
     length=${1-32}
     case "$length" in
@@ -397,12 +430,13 @@ kp_password_shortcut() {
     fi
     length=$((10#$length))
     local policy=(-L "$length" -l -U -n -s --every-group)
-    if [[ "$shortcut" = strong ]]; then
+    if [[ "$entry_mode" = false ]]; then
         kp_require_backend && keepassxc-cli generate "${policy[@]}"
     else
         kp_load_config || return
         kp_require_database || return
-        kp_run_database edit -g "${policy[@]}" -- "$entry"
+        kp_require_clipboard "$clipboard_timeout" || return
+        kp_with_database_password kp_save_and_copy "$command" "$entry" "${policy[@]}"
     fi
 }
 

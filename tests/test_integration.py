@@ -126,11 +126,45 @@ class KeePassXCTests(unittest.TestCase):
         self.assert_password_policy(password, 32)
         self.assertNotEqual(password + "\n", original)
         self.assertNotIn(password, result.stdout + result.stderr)
+        self.s.wait_cleanup()
+        self.assertEqual((self.s.path / "clipboard").read_text(), password)
         self.assertEqual(self.s.run("show", "Test entry", "-a", "UserName").stdout, "synthetic-user\n")
         self.assertEqual(self.s.run("show", "Test entry", "-a", "Notes").stdout, "Keep these notes\n")
         before = self.s.database.read_bytes()
         self.assertNotEqual(self.s.run("renew", "Missing entry").returncode, 0)
         self.assertEqual(self.s.database.read_bytes(), before)
+        self.assertEqual((self.s.path / "clipboard").read_text(), password)
+
+    def test_real_strong_creates_and_copies_without_overwriting(self):
+        self.assertEqual(self.s.run("mkdir", "Work").returncode, 0)
+        for count, (entry, length) in enumerate((("Work/New entry", 32), ("32", 24), ("--help", 16)), 1):
+            result = self.s.run("strong", "--", entry, str(length))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "")
+            password = self.s.run("show", "-a", "Password", "--", entry).stdout.rstrip("\n")
+            self.assert_password_policy(password, length)
+            self.assertNotIn(password, result.stderr)
+            self.s.wait_cleanup(count)
+            self.assertEqual((self.s.path / "clipboard").read_text(), password)
+            before = self.s.database.read_bytes()
+            for path in (entry, "Missing group/Entry"):
+                result = self.s.run("strong", "--", path)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.s.database.read_bytes(), before)
+                self.assertEqual((self.s.path / "clipboard").read_text(), password)
+
+    def test_real_shortcut_copy_failure_keeps_saved_password(self):
+        self.s.env["FAKE_MODE"] = "clipboard-fail"
+        for command in ("strong", "renew"):
+            result = self.s.run(command, "Test entry")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("password saved, but copying failed", result.stderr)
+            password = self.s.run("show", "Test entry", "-a", "Password").stdout.rstrip("\n")
+            self.assert_password_policy(password, 32)
+        self.s.env["FAKE_MODE"] = ""
+        self.assertEqual(self.s.run("copy", "Test entry").returncode, 0)
+        self.s.wait_cleanup()
+        self.assertEqual((self.s.path / "clipboard").read_text(), password)
 
     def assert_password_policy(self, password, length):
         self.assertEqual(len(password), length)
