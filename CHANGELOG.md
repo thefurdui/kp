@@ -7,6 +7,9 @@ User-visible changes are recorded here. Version numbers follow
 
 ### Added
 
+- `kp strong [LENGTH]` prints a password with lowercase, uppercase, digits, and
+  symbols; `kp renew ENTRY [LENGTH]` saves one to an existing entry. Both default
+  to 32 characters and accept lengths from 12 to 256.
 - `kp mv ENTRY... GROUP` moves multiple entries into an existing group, checks all
   paths before writing, and reports partial failures. The original single-entry
   syntax remains supported.

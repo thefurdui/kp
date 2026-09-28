@@ -112,6 +112,31 @@ class KeePassXCTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.s.path / "clipboard").read_bytes(), original)
 
+    def test_real_password_shortcuts_and_preserved_entry_fields(self):
+        for length in (12, 32, 256):
+            result = self.s.run("strong", str(length))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_password_policy(result.stdout.rstrip("\n"), length)
+        result = self.s.run("add", "Test entry", "-u", "synthetic-user", "--notes", "Keep these notes", "-g")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = self.s.run("show", "Test entry", "-a", "Password").stdout
+        result = self.s.run("renew", "Test entry")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        password = self.s.run("show", "Test entry", "-a", "Password").stdout.rstrip("\n")
+        self.assert_password_policy(password, 32)
+        self.assertNotEqual(password + "\n", original)
+        self.assertNotIn(password, result.stdout + result.stderr)
+        self.assertEqual(self.s.run("show", "Test entry", "-a", "UserName").stdout, "synthetic-user\n")
+        self.assertEqual(self.s.run("show", "Test entry", "-a", "Notes").stdout, "Keep these notes\n")
+        before = self.s.database.read_bytes()
+        self.assertNotEqual(self.s.run("renew", "Missing entry").returncode, 0)
+        self.assertEqual(self.s.database.read_bytes(), before)
+
+    def assert_password_policy(self, password, length):
+        self.assertEqual(len(password), length)
+        for pattern in (r"[a-z]", r"[A-Z]", r"[0-9]", r"[^a-zA-Z0-9\s]"):
+            self.assertRegex(password, pattern)
+
     def test_real_add_and_edit_password_prompts(self):
         for command, password in (("add", "fake first \\ value "), ("edit", "fake second value")):
             with self.subTest(command=command):

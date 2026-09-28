@@ -171,6 +171,50 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.s.log("security"), [])
 
+    def test_password_shortcuts_help_and_generation_need_no_setup(self):
+        self.s.env["KP_CONFIG_FILE"] = "/nonexistent/config"
+        for command in ("strong", "renew"):
+            for args in (("help", command), (command, "--help"), (command, "-h")):
+                self.assertEqual(self.s.run(*args).returncode, 0)
+        self.assertEqual(self.s.log("keepassxc-cli"), [])
+        for args, length in (((), "32"), (("16",), "16"), (("024",), "24")):
+            result = self.s.run("strong", *args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.s.log("keepassxc-cli")[-1]["args"],
+                             ["generate", "-L", length, "-l", "-U", "-n", "-s", "--every-group"])
+        self.assertEqual(self.s.log("security"), [])
+
+    def test_renew_preserves_entry_path_and_authenticates_once(self):
+        for entry, args, length in (("Work/A & päss", (), "32"), ("--help", ("16",), "16")):
+            result = self.s.run("renew", "--", entry, *args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            call = self.s.log("keepassxc-cli")[-1]
+            self.assertEqual(call["args"], ["edit", str(self.s.database), "-q", "-g", "-L", length,
+                                            "-l", "-U", "-n", "-s", "--every-group", "--", entry])
+            self.assertEqual(call["stdin"], self.s.master + "\n")
+        self.assertEqual(len(self.s.log("security")), 2)
+        self.assertEqual(len(self.s.log("keepassxc-cli")), 2)
+        self.assertEqual(self.s.log("osascript"), [])
+
+    def test_password_shortcuts_reject_invalid_input_before_authentication(self):
+        for length in ("", "0", "3", "11", "257", "999999999999999999", "-1", "1+4", "abc"):
+            for args in (("strong", length), ("renew", "Entry", length)):
+                with self.subTest(args=args):
+                    self.assertEqual(self.s.run(*args).returncode, 2)
+        for args in (("renew",), ("renew", ""), ("renew", "Entry", "32", "extra"),
+                     ("strong", "32", "extra")):
+            self.assertEqual(self.s.run(*args).returncode, 2)
+        self.assertEqual(self.s.log("security"), [])
+        self.assertEqual(self.s.log("keepassxc-cli"), [])
+
+    def test_password_shortcuts_propagate_failures(self):
+        self.s.env["FAKE_MODE"] = "keychain-fail"
+        self.assertNotEqual(self.s.run("renew", "Entry").returncode, 0)
+        self.assertEqual(self.s.log("keepassxc-cli"), [])
+        self.s.env["FAKE_MODE"] = "backend-fail"
+        for args in (("strong",), ("renew", "Entry")):
+            self.assertEqual(self.s.run(*args).returncode, 7)
+
     def test_arguments_and_master_password_are_preserved(self):
         result = self.s.run("show", "Work/A & B", "-a", "UserName")
         self.assertEqual(result.returncode, 0, result.stderr)

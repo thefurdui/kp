@@ -18,6 +18,8 @@ Setup:
   --version                 Print the kp version
 
 Everyday use:
+  strong [LENGTH]           Print a password with all four character types (32)
+  renew ENTRY [LENGTH]      Replace a stored password with the same policy
   ls [GROUP]                List entries
   search QUERY              Find entry paths
   show ENTRY [OPTIONS]      Show an entry (password hidden by default)
@@ -47,6 +49,20 @@ kp_command_help() {
         init) printf 'Usage: kp init DATABASE\nCreate config for an existing database; never overwrite existing config.\n' ;;
         doctor) printf 'Usage: kp doctor\nCheck configuration and dependencies without retrieving credentials.\n' ;;
         copy|clip|kpc) printf 'Usage: kp copy ENTRY [SECONDS]\n       kpc ENTRY [SECONDS]\n' ;;
+        strong|renew) cat <<'EOF'
+Usage: kp strong [LENGTH]
+       kp renew ENTRY [LENGTH]
+
+Generate a password containing lowercase, uppercase, digits, and symbols.
+Length defaults to 32; accepted range is 12–256 characters.
+strong prints the password without opening the database.
+renew saves a new password to an existing entry, preserving other fields.
+It updates the vault immediately; change the password on the service separately.
+Use kp copy ENTRY to copy the saved password.
+Use generate or edit -g for custom KeePassXC generation options.
+Use -- before an entry path starting with a dash.
+EOF
+            ;;
         mv) cat <<'EOF'
 Usage: kp mv [OPTIONS] ENTRY... GROUP
 
@@ -354,6 +370,42 @@ kp_copy() {
     printf 'Password copied; expires in %s seconds.\n' "$((10#$timeout))" >&2
 }
 
+kp_password_shortcut() {
+    local shortcut=$1 entry='' length
+    shift
+    if [[ $# = 1 && ( $1 = -h || $1 = --help ) ]]; then
+        kp_command_help "$shortcut"
+        return
+    fi
+    if [[ ${1:-} = -- ]]; then shift; fi
+    if [[ "$shortcut" = renew ]]; then
+        [[ $# -ge 1 && $# -le 2 && -n "$1" ]] || {
+            kp_error 'usage: kp renew ENTRY [LENGTH]'; return 2;
+        }
+        entry=$1
+        shift
+    else
+        [[ $# -le 1 ]] || { kp_error 'usage: kp strong [LENGTH]'; return 2; }
+    fi
+    length=${1-32}
+    case "$length" in
+        ''|*[!0-9]*) kp_error 'length must be a whole number from 12 to 256'; return 2 ;;
+    esac
+    # Bound the input before arithmetic to avoid overflow; use decimal explicitly.
+    if [[ ${#length} -gt 3 ]] || ((10#$length < 12 || 10#$length > 256)); then
+        kp_error 'length must be a whole number from 12 to 256'; return 2
+    fi
+    length=$((10#$length))
+    local policy=(-L "$length" -l -U -n -s --every-group)
+    if [[ "$shortcut" = strong ]]; then
+        kp_require_backend && keepassxc-cli generate "${policy[@]}"
+    else
+        kp_load_config || return
+        kp_require_database || return
+        kp_run_database edit -g "${policy[@]}" -- "$entry"
+    fi
+}
+
 kp_main() {
     local command=${1:-help}
     local entry_prompt=false entry_generate=false entry_help=false
@@ -370,6 +422,7 @@ kp_main() {
             if [[ $# = 1 && ( $1 = --help || $1 = -h ) ]]; then kp_command_help init; else kp_init "$@"; fi
             return ;;
         generate|diceware|estimate) kp_require_backend && keepassxc-cli "$command" "$@"; return ;;
+        strong|renew) kp_password_shortcut "$command" "$@"; return ;;
         mv) kp_move "$@"; return ;;
         copy|clip)
             if [[ ${1:-} = --help || ${1:-} = -h ]]; then

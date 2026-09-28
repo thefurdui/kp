@@ -144,6 +144,22 @@ operation. These prompts require a terminal; generated passwords work in scripts
 
 #### Replace a stored password with a newly generated one
 
+For the everyday shortcut, use:
+
+```sh
+kp renew 'work/example-app'
+kpc 'work/example-app'
+```
+
+`renew` immediately replaces the existing entry's password with a 32-character
+password containing at least one lowercase letter, uppercase letter, digit, and
+symbol. It preserves the other fields. Pass a length to customize it:
+`kp renew 'work/example-app' 24` (12–256 characters). Change the password on the
+actual service separately. Use `kp renew -- '-entry-name'` for a path starting
+with a dash.
+
+The standard KeePassXC commands remain available for custom policies:
+
 ```sh
 kp edit 'work/example-app' -g -L 32
 kpc 'work/example-app'
@@ -260,9 +276,14 @@ GUI for moving groups. See `kp help mv` for the supported options.
 #### Generate a password or passphrase without saving an entry
 
 ```sh
+kp strong
+kp strong 24
 kp generate -L 32
 kp diceware -W 6
 ```
+
+`strong` defaults to 32 characters and guarantees lowercase, uppercase, digits,
+and symbols, using KeePassXC's generator. Its optional length accepts 12–256.
 
 These print a generated value to stdout without opening or updating the database.
 Use `add -g` or `edit -g` when you want the generated password saved to an entry.
@@ -309,6 +330,7 @@ copy the `.kdbx` file itself.
 | --- | --- |
 | `kp add ENTRY` | Create an entry inside an existing group. `-u` sets its username; `-g` generates a password; `-p` prompts for one. |
 | `kp edit ENTRY` | Change selected fields of an existing entry. `-g` replaces its password, `-p` prompts for one, and `-t TITLE` renames it. |
+| `kp renew ENTRY [LENGTH]` | Replace an existing entry's password with the `strong` policy; defaults to 32 characters, accepts 12–256. |
 | `kp mkdir GROUP` | Create a database group. For a nested path, create its parent groups first. |
 | `kp mv ENTRY... GROUP` | Move one or more entries to an existing destination group (the last argument). Check paths first; stop on the first failed move. |
 | `kp rm ENTRY` | Remove an entry, using the database's recycle-bin behavior described below. |
@@ -335,6 +357,7 @@ items when needed.
 | Command | Purpose |
 | --- | --- |
 | `kp generate` | Print a random password. `-L` sets its length; `-l`, `-U`, `-n`, and `-s` select character sets. |
+| `kp strong [LENGTH]` | Print a password with all four character types; defaults to 32 characters, accepts 12–256. |
 | `kp diceware` | Print a random passphrase. `-W` sets the word count; `-w FILE` supplies a custom word list. |
 | `kp estimate [PASSWORD]` | Estimate password entropy. With no password argument, read one line from stdin. |
 
