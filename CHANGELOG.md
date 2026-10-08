@@ -7,6 +7,11 @@ User-visible changes are recorded here. Version numbers follow
 
 ### Added
 
+- Native Bash and Zsh Tab completion for `kpc` and related `kp` commands, with
+  shared-prefix matching, normal shell match lists, and quoting for entry names.
+  Enable it with `source <(kp completion bash)` or, after Zsh's `compinit`,
+  `source <(kp completion zsh)`. Completion reads names without caching them or
+  accessing entry passwords, and installed copies include the shell adapters.
 - `kp strong [LENGTH]` prints a password with lowercase, uppercase, digits, and
   symbols. `kp strong ENTRY [LENGTH]` creates an entry and copies its password;
   `kp renew ENTRY [LENGTH]` replaces an existing entry's password and copies it.

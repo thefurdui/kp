@@ -112,6 +112,25 @@ class KeePassXCTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.s.path / "clipboard").read_bytes(), original)
 
+    def test_real_completion_lists_names_and_tracks_changes(self):
+        self.assertEqual(self.s.run("mkdir", "Work").returncode, 0)
+        self.assertEqual(self.s.run("mkdir", "Empty").returncode, 0)
+        for entry in ("github", "gitlab", "Work/Quoted ' entry", "Work/Ключ"):
+            self.assertEqual(self.s.run("add", entry, "-g").returncode, 0)
+        count = len(self.s.log("security"))
+        result = self.s.run("__complete", "kpc", "")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(result.stdout.splitlines()),
+                         {"entries", "github", "gitlab", "Work/Quoted ' entry", "Work/Ключ"})
+        self.assertEqual(len(self.s.log("security")), count + 1)
+        self.assertEqual(self.s.run("__complete", "kp", "ls", "").stdout.splitlines(),
+                         ["groups", "/", "Work", "Empty"])
+        self.assertEqual(self.s.run("edit", "github", "-t", "renamed").returncode, 0)
+        result = self.s.run("__complete", "kpc", "")
+        self.assertIn("renamed", result.stdout.splitlines())
+        self.assertNotIn("github", result.stdout.splitlines())
+        self.assertEqual(self.s.log("osascript"), [])
+
     def test_real_password_shortcuts_and_preserved_entry_fields(self):
         for length in (12, 32, 256):
             result = self.s.run("strong", str(length))

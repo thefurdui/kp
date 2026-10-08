@@ -68,6 +68,46 @@ Without `make`, use `/bin/bash scripts/install.sh install`. A custom destination
 works with `make install PREFIX="/absolute/path"`; add that prefix's `bin` directory
 to `PATH`.
 
+### Tab completion
+
+After installing, enable completion in your shell startup file, after setting
+`PATH`. For **Zsh**, add this to `~/.zshrc` (skip the first two lines if your shell
+configuration already runs `compinit`):
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(kp completion zsh)
+```
+
+For **Bash**, add this to `~/.bashrc`, or `~/.bash_profile` for macOS login shells:
+
+```bash
+source <(kp completion bash)
+```
+
+Run the same setup in your current shell, or open a new terminal. Bash completion
+works with the built-in Bash 3.2 and needs no `bash-completion` package.
+
+Type part of an entry path and press **Tab**, for example `kpc work/ex<Tab>` or
+`kp show work/ex<Tab>`. A unique match completes the entry name and adds a space.
+With several matches, the shell extends the shared prefix; further Tab presses
+list or cycle through matches according to your normal shell settings. For example,
+`kpc gi<Tab>` becomes `kpc git` when `github` and `gitlab` both exist. Type `h` and
+press Tab to select `github`. Spaces and shell punctuation are quoted automatically.
+
+Entry completion covers `kpc`, `kp copy`, `clip`, `show`, `edit`, `renew`, `rm`, and
+the entry argument of attachment commands. `mv` offers both entry and group paths;
+`ls` and group/entry creation commands offer existing groups. `kp <Tab>` completes
+command names. Timeouts, password lengths, and option values do not suggest entries.
+
+Each entry/group completion lists names from the configured vault using Keychain
+authentication, which may trigger its normal access prompt. It reads no entry
+passwords, changes no entries or clipboard contents, and writes no completion cache.
+If configuration, Keychain access, or unlocking fails, completion silently leaves
+the text unchanged; use `kp ls` to see the error. Names containing line breaks are
+outside the line-based completion format.
+
 ## Configure
 
 Point `kp` at the existing database:
@@ -326,6 +366,7 @@ kp's additional support for multiple source entries.
 | `kp doctor` | Check config, paths, and tools without retrieving credentials or unlocking the database. |
 | `kp help [COMMAND]` | Show kp's overview or help for a command. `kp`, `kp -h`, and `kp --help` also show the overview. |
 | `kp --version` | Print the installed kp version; `kp -v` is an alias. |
+| `kp completion bash\|zsh` | Print the shell setup for native entry and command Tab completion. |
 | `kp copy ENTRY [SECONDS]` | Copy the entry password with confidential/transient markers and conditional expiration; aliases: `kp clip` and `kpc`. |
 
 #### Browse and inspect the database
@@ -528,6 +569,7 @@ The repository has three runtime responsibilities:
 | `bin/kp` (`bin/kpc` links to it) | Resolve installation paths and select the command                 |
 | `lib/kp.sh`                      | Configuration, CLI dispatch, Keychain and KeePassXC orchestration |
 | `lib/clipboard.applescript`      | Native pasteboard writes and conditional expiration               |
+| `lib/completion.sh`, `completions/` | Read-only completion candidates and Bash/Zsh adapters          |
 
 `scripts/install.sh` manages installation and removal. `VERSION` supplies the release
 number reported by the installed command.
@@ -540,7 +582,8 @@ make test-integration
 ```
 
 CLI tests use Python's standard `unittest` library, fake executables, fake passwords,
-and a temporary home directory. Integration tests create a disposable KDBX database
+and a temporary home directory. Completion tests send actual Tab presses to clean
+Bash and Zsh terminals. Integration tests create a disposable KDBX database
 and use a **private named pasteboard**, leaving your vault, Keychain, and general
 clipboard untouched. Native integration requires a logged-in macOS session and
 KeePassXC on `PATH`. GitHub Actions runs the same checks on macOS.

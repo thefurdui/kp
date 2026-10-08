@@ -38,10 +38,11 @@ fi
 mkdir -p -- "$prefix/bin" "$prefix/libexec"
 staging=$(mktemp -d "$prefix/libexec/.kp-install.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
-mkdir -p "$staging/bin" "$staging/lib"
+mkdir -p "$staging/bin" "$staging/lib" "$staging/completions"
 install -m 755 "$root/bin/kp" "$staging/bin/kp"
 ln -s kp "$staging/bin/kpc"
-install -m 644 "$root/lib/kp.sh" "$root/lib/clipboard.applescript" "$staging/lib/"
+install -m 644 "$root/lib/kp.sh" "$root/lib/completion.sh" "$root/lib/clipboard.applescript" "$staging/lib/"
+install -m 644 "$root/completions/kp.bash" "$root/completions/kp.zsh" "$staging/completions/"
 install -m 644 "$root/VERSION" "$root/README.md" "$root/CHANGELOG.md" "$staging/"
 if [[ -f "$root/LICENSE" ]]; then install -m 644 "$root/LICENSE" "$staging/"; fi
 printf '%s\n' "$marker" > "$staging/.kp-install"
@@ -65,3 +66,4 @@ for name in kp kpc; do
 done
 printf 'Installed kp %s to %s/bin\n' "$(cat "$package/VERSION")" "$prefix"
 printf 'Ensure %s/bin is on PATH. Next: kp init /path/to/vault.kdbx\n' "$prefix"
+printf 'Enable Tab completion in your shell startup file (see README): kp completion bash|zsh\n'

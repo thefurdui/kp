@@ -15,6 +15,7 @@ Setup:
   init DATABASE             Create config for an existing database
   doctor                    Check setup without retrieving credentials
   help [COMMAND]            Show kp or KeePassXC command help
+  completion bash|zsh       Print shell Tab-completion setup
   --version                 Print the kp version
 
 Everyday use:
@@ -49,6 +50,7 @@ kp_command_help() {
     case "$1" in
         init) printf 'Usage: kp init DATABASE\nCreate config for an existing database; never overwrite existing config.\n' ;;
         doctor) printf 'Usage: kp doctor\nCheck configuration and dependencies without retrieving credentials.\n' ;;
+        completion) printf 'Usage: kp completion bash|zsh\nSource the output in your shell (see README).\n' ;;
         copy|clip|kpc) printf 'Usage: kp copy ENTRY [SECONDS]\n       kpc ENTRY [SECONDS]\n' ;;
         strong|renew) cat <<'EOF'
 Usage: kp strong [LENGTH]
@@ -445,6 +447,16 @@ kp_main() {
     local entry_prompt=false entry_generate=false entry_help=false
     (($# == 0)) || shift
     case "$command" in
+        completion)
+            if [[ $# = 1 && ( $1 = --help || $1 = -h ) ]]; then kp_command_help completion; return; fi
+            [[ $# = 1 && ( $1 = bash || $1 = zsh ) ]] || { kp_error 'usage: kp completion bash|zsh'; return 2; }
+            cat "$KP_ROOT/completions/kp.$1"; return ;;
+        __complete)
+            # Private, read-only protocol used by the shell adapters. Failures
+            # leave the command line alone, without printing diagnostics in it.
+            # shellcheck source=lib/completion.sh
+            source "$KP_ROOT/lib/completion.sh"
+            kp_complete "$@" 2>/dev/null; return ;;
         help|-h|--help)
             [[ $# -le 1 ]] || { kp_error 'usage: kp help [COMMAND]'; return 2; }
             if [[ $# = 0 ]]; then kp_help; else kp_command_help "$1"; fi

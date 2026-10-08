@@ -14,10 +14,12 @@ uninstall:
 
 test:
 	$(PYTHON) -m unittest discover -s tests -p 'test_cli.py' -v
+	$(PYTHON) -m unittest discover -s tests -p 'test_completion.py' -v
 
 test-integration:
 	$(PYTHON) -m unittest discover -s tests -p 'test_integration.py' -v
 
 lint:
-	@for script in bin/kp lib/kp.sh scripts/install.sh; do /bin/bash -n "$$script" || exit; done
-	shellcheck -x -P . bin/kp lib/kp.sh scripts/install.sh
+	@for script in bin/kp lib/kp.sh lib/completion.sh completions/kp.bash scripts/install.sh; do /bin/bash -n "$$script" || exit; done
+	zsh -n completions/kp.zsh
+	shellcheck -x -P . bin/kp lib/kp.sh lib/completion.sh completions/kp.bash scripts/install.sh

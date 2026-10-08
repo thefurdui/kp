@@ -55,7 +55,9 @@ elif name == "keepassxc-cli":
     if mode == "move-write-fail" and args[0] == "mv" and args[-2] == "Failing":
         print("fake save failure", file=sys.stderr)
         sys.exit(7)
-    if args[0] == "show" and "Uuid" in args:
+    if args[0] == "ls" and (root / "listing").exists():
+        sys.stdout.buffer.write((root / "listing").read_bytes())
+    elif args[0] == "show" and "Uuid" in args:
         print("uuid:" + args[-1].lstrip("/"))
     elif args[0] == "show":
         sys.stdout.buffer.write((root / "entry").read_bytes() + b"\n")
@@ -493,6 +495,13 @@ class CliTests(unittest.TestCase):
         installed = prefix / "bin/kp"
         self.assertEqual(self.s.run("--version", executable=installed).stdout.strip(),
                          "kp " + (ROOT / "VERSION").read_text().strip())
+        for shell in ("bash", "zsh"):
+            result = self.s.run("completion", shell, executable=installed)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, (ROOT / "completions" / ("kp." + shell)).read_text())
+        (self.s.path / "listing").write_text("Installed entry\n")
+        result = self.s.run("__complete", "kpc", "Inst", executable=installed)
+        self.assertEqual(result.stdout, "entries\nInstalled entry\n")
         result = self.s.run("Test", "1", executable=prefix / "bin/kpc")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.s.wait_cleanup()
